@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Ring Catcher</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            background: #0a0a1a;
+            font-family: 'Orbitron', sans-serif;
+            touch-action: none;
+        }
+        
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #00ffcc;
+            font-size: 18px;
+            text-shadow: 0 0 10px #00ffcc;
+            z-index: 100;
+            pointer-events: none;
+        }
+        
+        #score {
+            font-size: 32px;
+            font-weight: bold;
+        }
+        
+        #high-score {
+            font-size: 14px;
+            opacity: 0.7;
+            margin-top: 5px;
+        }
+        
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(10, 10, 26, 0.9);
+            z-index: 200;
+        }
+        
+        #game-over-screen {
+            display: none;
+        }
+        
+        h1 {
+            font-size: 48px;
+            color: #ff66ac;
+            text-shadow: 0 0 20px #ff66ac, 0 0 40px #ff66ac;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        p {
+            color: #aaa;
+            font-size: 16px;
+            margin-bottom: 30px;
+            text-align: center;
+            max-width: 80%;
+        }
+        
+        .btn {
+            padding: 15px 40px;
+            font-size: 20px;
+            font-family: 'Orbitron', sans-serif;
+            background: linear-gradient(135deg, #00ffcc, #00ccff);
+            border: none;
+            border-radius: 30px;
+            color: #0a0a1a;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 0 20px rgba(0, 255, 204, 0.5);
+        }
+        
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(0, 255, 204, 0.8);
+        }
+        
+        #final-score {
+            font-size: 64px;
+            color: #00ffcc;
+            text-shadow: 0 0 20px #00ffcc;
+            margin: 20px 0;
+        }
+        
+        #combo {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: #ffcc00;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 0 0 10px #ffcc00;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 100;
+        }
+        
+        .combo-active {
+            opacity: 1 !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="ui">
+            <div id="score">0</div>
+            <div id="high-score">Best: 0</div>
+        </div>
+        <div id="combo">COMBO x1</div>
+        
+        <div id="start-screen">
+            <h1>💍 Ring Catcher</h1>
+            <p>Catch the falling rings!<br>Drag left/right to move.<br>Chain catches for combo points.</p>
+            <button class="btn" id="start-btn">PLAY</button>
+        </div>
+        
+        <div id="game-over-screen">
+            <h1>Game Over</h1>
+            <p>Rings missed!</p>
+            <div id="final-score">0</div>
+            <button class="btn" id="restart-btn">PLAY AGAIN</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Game state
+        let scene, camera, renderer;
+        let player, rings = [];
+        let score = 0;
+        let highScore = localStorage.getItem('ringCatcherHighScore') || 0;
+        let gameRunning = false;
+        let playerX = 0;
+        let combo = 0;
+        let lastCatchTime = 0;
+        let ringSpawnRate = 2000;
+        let lastSpawn = 0;
+        let speedMultiplier = 1;
+        
+        const RING_COLORS = [0xff66ac, 0x00ffcc, 0xffcc00, 0x00ccff, 0xff6699];
+        
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x0a0a1a, 5, 25);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 10);
+            camera.lookAt(0, 0, 0);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setClearColor(0x0a0a1a);
+            document.getElementById('game-container').appendChild(renderer.domElement);
+            
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const pointLight = new THREE.PointLight(0x00ffcc, 1, 20);
+            pointLight.position.set(0, 5, 5);
+            scene.add(pointLight);
+            
+            // Background particles
+            createBackground();
+            
+            // Player (cup/hand)
+            createPlayer();
+            
+            // Update high score display
+            document.getElementById('high-score').textContent = `Best: ${highScore}`;
+            
+            // Events
+            setupEvents();
+            
+            // Start render loop
+            animate();
+        }
+        
+        function createBackground() {
+            const geometry = new THREE.BufferGeometry();
+            const vertices = [];
+            
+            for (let i = 0; i < 500; i++) {
+                vertices.push(
+                    (Math.random() - 0.5) * 30,
+                    (Math.random() - 0.5) * 20,
+                    (Math.random() - 0.5) * 20 - 5
+                );
+            }
+            
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            
+            const material = new THREE.PointsMaterial({
+                color: 0x4444ff,
+                size: 0.05,
+                transparent: true,
+                opacity: 0.6
+            });
+            
+            const stars = new THREE.Points(geometry, material);
+            scene.add(stars);
+        }
+        
+        function createPlayer() {
+            // Cup shape to catch rings
+            const cupGeometry = new THREE.CylinderGeometry(0.8, 0.5, 0.6, 32, 1, true);
+            const cupMaterial = new THREE.MeshPhongMaterial({
+                color: 0x00ffcc,
+                emissive: 0x004444,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            player = new THREE.Mesh(cupGeometry, cupMaterial);
+            player.rotation.x = Math.PI;
+            player.position.y = -3;
+            scene.add(player);
+            
+            // Glow ring
+            const glowGeometry = new THREE.TorusGeometry(0.65, 0.08, 16, 32);
+            const glowMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ffcc,
+                transparent: true,
+                opacity: 0.5
+            });
+            const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+            glow.position.y = 0.3;
+            player.add(glow);
+        }
+        
+        function createRing() {
+            const color = RING_COLORS[Math.floor(Math.random() * RING_COLORS.length)];
+            
+            // Ring (torus)
+            const geometry = new THREE.TorusGeometry(0.4, 0.12, 16, 32);
+            const material = new THREE.MeshPhongMaterial({
+                color: color,
+                emissive: color,
+                emissiveIntensity: 0.3,
+                shininess: 100
+            });
+            
+            const ring = new THREE.Mesh(geometry, material);
+            ring.position.x = (Math.random() - 0.5) * 8;
+            ring.position.y = 6;
+            ring.position.z = 0;
+            ring.rotation.x = Math.random() * Math.PI;
+            ring.rotation.y = Math.random() * Math.PI;
+            
+            ring.userData = {
+                speed: (2 + Math.random() * 2) * speedMultiplier,
+                rotSpeed: (Math.random() - 0.5) * 0.1,
+                color: color
+            };
+            
+            scene.add(ring);
+            rings.push(ring);
+        }
+        
+        function setupEvents() {
+            // Mouse/touch move
+            document.addEventListener('mousemove', onPointerMove);
+            document.addEventListener('touchmove', onTouchMove, { passive: false });
+            document.addEventListener('touchstart', onTouchMove, { passive: false });
+            
+            // Buttons
+            document.getElementById('start-btn').addEventListener('click', startGame);
+            document.getElementById('restart-btn').addEventListener('click', startGame);
+            
+            // Resize
+            window.addEventListener('resize', onResize);
+        }
+        
+        function onPointerMove(event) {
+            if (!gameRunning) return;
+            
+            const x = (event.clientX / window.innerWidth) * 2 - 1;
+            playerX = x * 5;
+        }
+        
+        function onTouchMove(event) {
+            if (!gameRunning) return;
+            event.preventDefault();
+            
+            const touch = event.touches[0];
+            const x = (touch.clientX / window.innerWidth) * 2 - 1;
+            playerX = x * 5;
+        }
+        
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function startGame() {
+            document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('game-over-screen').style.display = 'none';
+            
+            // Reset state
+            score = 0;
+            combo = 0;
+            speedMultiplier = 1;
+            ringSpawnRate = 2000;
+            playerX = 0;
+            
+            // Clear rings
+            rings.forEach(ring => scene.remove(ring));
+            rings = [];
+            
+            updateScore();
+            gameRunning = true;
+        }
+        
+        function gameOver() {
+            gameRunning = false;
+            
+            // Update high score
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('ringCatcherHighScore', highScore);
+                document.getElementById('high-score').textContent = `Best: ${highScore}`;
+            }
+            
+            document.getElementById('final-score').textContent = score;
+            document.getElementById('game-over-screen').style.display = 'flex';
+        }
+        
+        function updateScore() {
+            document.getElementById('score').textContent = score;
+        }
+        
+        function showCombo() {
+            const comboEl = document.getElementById('combo');
+            comboEl.textContent = `COMBO x${combo}`;
+            comboEl.classList.add('combo-active');
+            
+            setTimeout(() => {
+                comboEl.classList.remove('combo-active');
+            }, 1000);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = Date.now();
+            
+            // Player movement (smooth)
+            player.position.x += (playerX - player.position.x) * 0.15;
+            player.rotation.z = (playerX - player.position.x) * 0.2;
+            
+            // Spawn rings
+            if (gameRunning && time - lastSpawn > ringSpawnRate) {
+                createRing();
+                lastSpawn = time;
+                
+                // Increase difficulty
+                if (ringSpawnRate > 600) {
+                    ringSpawnRate -= 20;
+                }
+                speedMultiplier += 0.01;
+            }
+            
+            // Update rings
+            for (let i = rings.length - 1; i >= 0; i--) {
+                const ring = rings[i];
+                
+                ring.position.y -= ring.userData.speed * 0.03;
+                ring.rotation.x += ring.userData.rotSpeed;
+                ring.rotation.y += ring.userData.rotSpeed * 0.5;
+                
+                // Check collision with player
+                const dx = ring.position.x - player.position.x;
+                const dy = ring.position.y - player.position.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist < 0.8 && ring.position.y < -2.5 && ring.position.y > -3.5) {
+                    // Caught!
+                    scene.remove(ring);
+                    rings.splice(i, 1);
+                    
+                    // Combo system
+                    if (time - lastCatchTime < 1000) {
+                        combo++;
+                        if (combo > 1) showCombo();
+                    } else {
+                        combo = 1;
+                    }
+                    lastCatchTime = time;
+                    
+                    const points = 10 * combo;
+                    score += points;
+                    updateScore();
+                    
+                    // Flash effect
+                    player.material.emissiveIntensity = 0.8;
+                    setTimeout(() => {
+                        player.material.emissiveIntensity = 0.2;
+                    }, 100);
+                    
+                    continue;
+                }
+                
+                // Missed
+                if (ring.position.y < -5) {
+                    scene.remove(ring);
+                    rings.splice(i, 1);
+                    combo = 0; // Reset combo
+                    
+                    // Game over after 3 misses (optional, for now just reset combo)
+                }
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        init();
+    </script>
+</body>
+</html>
